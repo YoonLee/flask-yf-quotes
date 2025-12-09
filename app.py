@@ -4,31 +4,22 @@ Simple Flask service that proxies live quote data from Yahoo Finance via yfinanc
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from flask import Flask, jsonify
-import requests
 import yfinance as yf
 
 app = Flask(__name__)
-_YF_SESSION = requests.Session()
-_YF_SESSION.headers.update(
-    {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-    }
-)
 
 
-def _fetch_quote(symbol: str) -> Tuple[float, float, datetime, float]:
+def _fetch_quote(symbol: str) -> Tuple[float, float, datetime, float, Optional[str]]:
     """
     Fetch the most recent close plus previous close so we can calculate pct change.
     """
     ticker = yf.Ticker(symbol)
-    hist = ticker.history(period='2d')
+    hist = ticker.history(period="2d", auto_adjust=False)
 
-    if hist.empty:
+    if hist.empty or "Close" not in hist or "Volume" not in hist:
         raise ValueError(f"No price data available for symbol '{symbol}'.")
 
     last_close = float(hist["Close"].iloc[-1])
@@ -41,7 +32,15 @@ def _fetch_quote(symbol: str) -> Tuple[float, float, datetime, float]:
     if prev_close == 0.0:
         raise ValueError(f"Previous close is zero for symbol '{symbol}'.")
 
-    return last_close, prev_close, timestamp, volume
+    company_name: Optional[str] = None
+    try:
+        info = ticker.get_info()
+        if isinstance(info, dict):
+            company_name = info.get("longName") or info.get("shortName")
+    except Exception:
+        company_name = None
+
+    return last_close, prev_close, timestamp, volume, company_name
 
 
 def _format_volume(volume: float) -> str:
@@ -58,16 +57,17 @@ def _format_volume(volume: float) -> str:
 
 def _build_response(symbol: str) -> Dict[str, object]:
     symbol = symbol.upper()
-    last_price, prev_close, timestamp, volume = _fetch_quote(symbol)
+    last_price, prev_close, timestamp, volume, company_name = _fetch_quote(symbol)
     change_percent = ((last_price - prev_close) / prev_close) * 100
     server_time_utc = datetime.now(timezone.utc).isoformat()
 
     app.logger.info(
-        "Quote fetched | symbol=%s last_price=%.4f prev_close=%.4f volume=%.0f timestamp=%s server_time_utc=%s",
+        "Quote fetched | symbol=%s last_price=%.4f prev_close=%.4f volume=%.0f company=%s timestamp=%s server_time_utc=%s",
         symbol,
         last_price,
         prev_close,
         volume,
+        company_name or "unknown",
         timestamp.isoformat(),
         server_time_utc,
     )
@@ -81,6 +81,7 @@ def _build_response(symbol: str) -> Dict[str, object]:
         "volume_formatted": _format_volume(volume),
         "timestamp": timestamp.isoformat(),
         "last_updated_utc": server_time_utc,
+        "company_name": company_name,
     }
 
 
