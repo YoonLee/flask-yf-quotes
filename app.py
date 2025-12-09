@@ -7,9 +7,18 @@ from datetime import datetime, timezone
 from typing import Dict, Tuple
 
 from flask import Flask, jsonify
+import requests
 import yfinance as yf
 
 app = Flask(__name__)
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update(
+    {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+    }
+)
 
 
 def _fetch_quote(symbol: str) -> Tuple[float, float, datetime, float]:
@@ -17,9 +26,9 @@ def _fetch_quote(symbol: str) -> Tuple[float, float, datetime, float]:
     Fetch the most recent close plus previous close so we can calculate pct change.
     """
     ticker = yf.Ticker(symbol)
-    hist = ticker.history(period="2d", auto_adjust=False)
+    hist = ticker.history(period='2d')
 
-    if hist.empty or "Close" not in hist or "Volume" not in hist:
+    if hist.empty:
         raise ValueError(f"No price data available for symbol '{symbol}'.")
 
     last_close = float(hist["Close"].iloc[-1])
